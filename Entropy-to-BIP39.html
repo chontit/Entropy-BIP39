@@ -1,0 +1,339 @@
+<!DOCTYPE html>                                                     <!-- บอกเบราว์เซอร์ว่าไฟล์นี้เป็นเอกสาร HTML5 -->
+<html lang="th">                                                    <!-- เริ่มต้นเอกสาร และระบุว่าเนื้อหาเป็นภาษาไทย -->
+<head>                                                              <!-- ส่วนหัว ใช้ตั้งค่าต่าง ๆ ไม่แสดงบนหน้าจอ -->
+<meta charset="UTF-8">                                              <!-- ใช้รหัสอักขระ UTF-8 เพื่อให้แสดงภาษาไทยได้ถูกต้อง -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"> <!-- CSP: กฎความปลอดภัยที่สั่งให้เบราว์เซอร์ห้ามโหลดหรือส่งข้อมูลออกนอกไฟล์ทุกช่องทาง ใช้ได้เฉพาะโค้ดที่อยู่ในไฟล์นี้เท่านั้น ต่อให้โค้ดพยายามส่งข้อมูลออกไป เบราว์เซอร์ก็จะบล็อกไว้ -->
+<meta name="viewport" content="width=device-width, initial-scale=1"> <!-- ปรับหน้าเว็บให้พอดีกับความกว้างของจอ เปิดบนมือถือก็อ่านได้ -->
+<title>Entropy → BIP39 (Offline)</title>                            <!-- ชื่อที่แสดงบนแท็บเบราว์เซอร์ -->
+<!--
+  ===================== คำศัพท์ที่ควรรู้ก่อนอ่านโค้ด =====================
+  Entropy         ค่าสุ่มที่ผู้ใช้สร้างเอง เช่น โยนเหรียญหรือทอยลูกเต๋า โค้ดนี้ไม่สุ่มอะไรเอง มีหน้าที่แค่แปลง Entropy ให้เป็นชุดคำ
+  Binary / HEX    รูปแบบที่ใช้กรอก Entropy  Binary คือเลขฐานสอง (0/1) หนึ่งตัวได้ 1 บิต  HEX คือเลขฐานสิบหก (0-9, a-f) หนึ่งตัวได้ 4 บิต
+  SHA-256         ฟังก์ชัน Hash ตามมาตรฐาน FIPS 180-4 รับข้อมูลเข้าไปแล้วได้ผลลัพธ์ยาว 256 บิตเสมอ แก้ข้อมูลเข้าแม้แต่บิตเดียว ผลจะเปลี่ยนไปทั้งหมด
+  Padding         การเติมบิตต่อท้ายข้อมูล (บิต 1 ตามด้วย 0 แล้วปิดท้ายด้วยความยาวข้อมูล) ให้ความยาวรวมเป็นทวีคูณของ 512 บิต ก่อนเข้า SHA-256
+  Checksum        บิตตรวจสอบ ตัดมาจากบิตแรก ๆ ของค่า Hash (12 คำใช้ 4 บิต, 24 คำใช้ 8 บิต) แล้วนำไปต่อท้าย Entropy ช่วยจับคำที่จดผิดได้
+  Wordlist        รายการคำภาษาอังกฤษทางการของ BIP39 จำนวน 2,048 คำ ใช้แปลงเลข 0-2047 ให้เป็นคำ
+  Seed Phrase     ผลลัพธ์สุดท้าย 12 หรือ 24 คำ ได้จากการนำ Entropy ต่อด้วย Checksum แล้วแบ่งเป็นชุด ชุดละ 11 บิต
+  Big-endian      การเรียงไบต์โดยเอาไบต์หลักสูงไว้หน้า เหมือนการเขียนตัวเลขปกติ ซึ่ง SHA-256 กำหนดให้ใช้แบบนี้
+  ROTR / Ch / Maj การจัดการระดับบิตใน SHA-256  ROTR = หมุนบิตไปทางขวา  Ch = เลือกบิต  Maj = เอาเสียงข้างมาก
+  Self-test       การทดสอบตัวเองทุกครั้งที่เปิดไฟล์ โดยเทียบผลกับชุดทดสอบมาตรฐานที่รู้คำตอบแน่นอน
+  =====================================================================
+-->
+<style>/* ===== ส่วนกำหนดหน้าตา (CSS) ใส่ไว้เท่าที่จำเป็น ===== */
+body{font:14px/1.5 monospace;max-width:960px;margin:auto;padding:10px}   /* ใช้ฟอนต์ที่ทุกตัวกว้างเท่ากัน จะได้นับเลข 0/1 ง่าย จำกัดความกว้างและจัดไว้กลางจอ */
+textarea{width:100%;height:80px;font:inherit;box-sizing:border-box}      /* ช่องกรอก Entropy กว้างเต็มแถว ใช้ฟอนต์เดียวกับทั้งหน้า */
+pre{background:#f2f2f2;padding:8px;white-space:pre-wrap;word-break:break-all} /* กล่องแสดงขั้นตอน พื้นเทาอ่อน ถ้าข้อความยาวเกินจะขึ้นบรรทัดใหม่ให้เอง */
+table{border-collapse:collapse}                                          /* ให้เส้นขอบตารางชิดกันเป็นเส้นเดียว */
+td,th{border:1px solid #999;padding:2px 8px}                             /* เส้นขอบและระยะห่างด้านในของแต่ละช่อง */
+.err{color:#c00}.ok{color:#080}.warn{color:#a60}                          /* สีของข้อความสถานะ แดง = ผิดพลาด  เขียว = ผ่าน  ส้ม = ยังไม่ครบ */
+footer{text-align:center;font-size:12px}                                  /* End credit จัดกึ่งกลาง ตัวอักษรเล็ก */
+</style>                                                            <!-- จบส่วน CSS -->
+</head>                                                             <!-- จบส่วนหัว -->
+<body>                                                              <!-- เริ่มส่วนเนื้อหาที่แสดงบนหน้าจอ -->
+<h3>Entropy → BIP39 Seed Phrase (Offline)</h3>                      <!-- หัวข้อของหน้า -->
+<noscript><p class="err">JavaScript ถูกปิดอยู่ ถ้าใช้บน Tails ให้ตั้ง Security Level ของ Tor Browser เป็น Standard ก่อนเปิดไฟล์นี้</p></noscript> <!-- ข้อความนี้จะขึ้นเฉพาะตอนที่เบราว์เซอร์ปิด JavaScript ไว้ -->
+<p id="selftest"></p>                                               <!-- ตำแหน่งแสดงผล Self-test ตอนเปิดไฟล์ -->
+<p>รูปแบบ Input:                                                    <!-- แถวเลือกรูปแบบของ Entropy -->
+<label><input type="radio" name="fmt" value="bin" checked> Binary (0/1)</label> <!-- เลขฐานสอง 1 ตัว = 1 บิต เหมาะกับการโยนเหรียญ (ค่าเริ่มต้น) -->
+<label><input type="radio" name="fmt" value="hex" id="fmtHex"> HEX (0-9, a-f)</label>      <!-- เลขฐานสิบหก 1 ตัว = 4 บิต เหมาะกับลูกเต๋า 16 หน้า (d16) -->
+</p>                                                                <!-- จบแถวเลือกรูปแบบ -->
+<p>จำนวนคำ:                                                         <!-- แถวเลือกความยาวของ Seed Phrase -->
+<label><input type="radio" name="len" value="128" checked> 12 คำ (128 บิต)</label> <!-- 12 คำ ใช้ Entropy 128 บิต (ค่าเริ่มต้น) -->
+<label><input type="radio" name="len" value="256"> 24 คำ (256 บิต)</label>        <!-- 24 คำ ใช้ Entropy 256 บิต -->
+</p>                                                                <!-- จบแถวเลือกจำนวนคำ -->
+<textarea id="inp" spellcheck="false" autocomplete="off" placeholder="Binary พิมพ์ได้เฉพาะ 0 และ 1 / HEX พิมพ์ได้เฉพาะ 0-9 และ A-F (เว้นวรรคหรือขึ้นบรรทัดใหม่ได้)"></textarea> <!-- ช่องกรอก Entropy ปิดตรวจคำสะกดและปิดการจำค่าอัตโนมัติ เบราว์เซอร์จะได้ไม่เก็บสิ่งที่พิมพ์ไว้ ตัวอักษรที่ไม่อนุญาตจะพิมพ์ไม่ติด (ดูฟังก์ชัน sanitize ในส่วนที่ 6) -->
+<p><button type="button" id="clr">ล้างข้อมูล</button></p>      <!-- ปุ่มล้างข้อมูล: กดเมื่อจดเสร็จ เพื่อลบ Entropy และ Seed Phrase ออกจากหน้าจอทันที -->
+<p id="status"></p>                                                 <!-- ตำแหน่งแสดงสถานะ: ครบแล้ว / ยังขาดอีกกี่บิต / กรอกผิดรูปแบบ -->
+<h4>ขั้นตอนการคำนวณ (ไว้ตรวจสอบ)</h4>                                <!-- หัวข้อส่วนแสดงขั้นตอน -->
+<pre id="steps"></pre>                                              <!-- แสดงค่าระหว่างทางของทุกขั้นตอน ให้นำไปตรวจทานได้ -->
+<h4>Output</h4>                                                     <!-- หัวข้อส่วนผลลัพธ์ -->
+<table><thead><tr><th>#</th><th>11 บิต</th><th>DEC (เลขฐาน 10)</th><th>ลำดับในรายการ (1-2048)</th><th>คำ</th></tr></thead><tbody id="out"></tbody></table> <!-- ตารางผลลัพธ์: ลำดับคำ / บิต 11 ตัว / เลขฐาน 10 (DEC, 0-2047) / ลำดับแบบเริ่มนับที่ 1 (ไว้เทียบกับ Wordlist ฉบับพิมพ์) / คำ -->
+<pre id="phrase"></pre>                                             <!-- แสดง Seed Phrase ทั้งชุดเรียงต่อกัน -->
+<hr><footer>© 2026 Chollatis Bitcoiner. | Don't Trust, Verify. Powered by Claude AI</footer> <!-- End credit: ข้อมูลผู้จัดทำ อยู่ท้ายหน้า จัดกึ่งกลาง คั่นด้วยเส้นแนวนอน -->
+
+<script>
+'use strict';                                                       // เปิดโหมดเข้มงวด ถ้าเขียนโค้ดผิดจะฟ้อง Error ทันที ไม่ปล่อยให้ทำงานผิดไปเงียบ ๆ
+// เรื่องความปลอดภัย: ไฟล์นี้ไม่ใช้ Math.random ไม่ใช้ระบบเข้ารหัสของเบราว์เซอร์ ไม่บันทึกข้อมูลใด ๆ (ไม่มี localStorage หรือ cookie) และไม่ต่อเครือข่าย
+// ความสุ่มทั้งหมดมาจาก Entropy ที่ผู้ใช้กรอกเอง โค้ดทำหน้าที่แค่แปลงค่าตามมาตรฐาน BIP39
+
+// ==================== ส่วนที่ 1: SHA-256 ตามมาตรฐาน FIPS 180-4 (เขียนเองทั้งหมด ไม่ใช้ไลบรารีภายนอก) ====================
+// ภาพรวม: เติมบิต (Padding) ให้ยาวครบทวีคูณของ 512 บิต → แบ่งเป็นบล็อก → ผสมบิตแต่ละบล็อก 64 รอบ → ได้ผลลัพธ์ 256 บิต
+// ส่วนนี้อ่านยากที่สุด แต่ไม่จำเป็นต้องเชื่อใจ เพราะระบบจะเทียบผลกับค่ามาตรฐานของ NIST ทุกครั้งที่เปิดไฟล์ (ดูส่วนที่ 5)
+const K = new Uint32Array([                                         // ค่าคงที่ 64 ตัว มาจาก 32 บิตแรกของเศษทศนิยมของรากที่สามของจำนวนเฉพาะ 64 ตัวแรก (2, 3, 5, ..., 311) เทียบได้กับ FIPS 180-4 หัวข้อ 4.2.2
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5, // K[0]  - K[7]
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174, // K[8]  - K[15]
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da, // K[16] - K[23]
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967, // K[24] - K[31]
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85, // K[32] - K[39]
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070, // K[40] - K[47]
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3, // K[48] - K[55]
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2  // K[56] - K[63]
+]);                                                                 // จบตารางค่าคงที่ K
+
+function sha256(msg) {                                              // รับข้อมูลเป็นไบต์ (Uint8Array) แล้วคืนค่า Hash ขนาด 32 ไบต์ (256 บิต)
+  const H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]); // ค่าตั้งต้นของ Hash 8 ตัว มาจาก 32 บิตแรกของเศษทศนิยมของรากที่สองของจำนวนเฉพาะ 8 ตัวแรก (2 ถึง 19) ตาม FIPS 180-4 หัวข้อ 5.3.3
+  const L = msg.length;                                             // ความยาวข้อมูลเดิม นับเป็นไบต์
+  const N = Math.ceil((L + 9) / 64) * 64;                           // ความยาวหลังเติมบิต = ข้อมูลเดิม + 1 ไบต์ (0x80) + 8 ไบต์ (บอกความยาว) แล้วปัดขึ้นให้ครบทวีคูณของ 64 ไบต์ (1 บล็อก = 64 ไบต์ = 512 บิต)
+  const m = new Uint8Array(N);                                      // จองพื้นที่ N ไบต์ ทุกไบต์เริ่มเป็น 0 อยู่แล้ว จึงได้เลข 0 ที่ต้องเติมไปในตัว
+  m.set(msg);                                                       // คัดลอกข้อมูลเดิมไปวางไว้ตรงต้นพื้นที่
+  m[L] = 0x80;                                                      // ต่อท้ายข้อมูลด้วยบิต 1 ตามด้วย 0 (0x80 = 10000000) ตามกฎ Padding
+  const v = new DataView(m.buffer);                                 // DataView ช่วยอ่านเขียนตัวเลข 32 บิตแบบ Big-endian ตามที่ SHA-256 กำหนด
+  v.setUint32(N - 8, Math.floor(L / 0x20000000));                   // 8 ไบต์สุดท้ายเก็บความยาวข้อมูลเป็นจำนวน "บิต" (ขนาด 64 บิต) บรรทัดนี้เขียน 32 บิตบนก่อน
+  v.setUint32(N - 4, (L * 8) >>> 0);                                // แล้วเขียน 32 บิตล่าง ส่วน ">>> 0" ใช้บังคับให้เป็นเลข 32 บิตที่ไม่ติดลบ
+  const W = new Uint32Array(64);                                    // ตาราง Message Schedule 64 ช่อง (Uint32Array ตัดค่าที่ล้นให้เหลือ 32 บิตเองอัตโนมัติ หรือก็คือ mod 2^32)
+  const R = (x, n) => (x >>> n) | (x << (32 - n));                  // ROTR: หมุนบิตไปทางขวา n ตำแหน่ง บิตที่หลุดทางขวาจะวนกลับมาเข้าทางซ้าย
+  for (let o = 0; o < N; o += 64) {                                 // ประมวลผลทีละบล็อก บล็อกละ 64 ไบต์ (Entropy 16 หรือ 32 ไบต์จะมีบล็อกเดียว)
+    for (let t = 0; t < 64; t++) {                                  // สร้างค่า W[0] ถึง W[63]
+      if (t < 16) W[t] = v.getUint32(o + t * 4);                    // W[0..15] คือข้อมูลของบล็อกนี้ แบ่งเป็น 16 ชิ้น ชิ้นละ 4 ไบต์
+      else W[t] = (R(W[t-2],17) ^ R(W[t-2],19) ^ (W[t-2] >>> 10)) + W[t-7] + (R(W[t-15],7) ^ R(W[t-15],18) ^ (W[t-15] >>> 3)) + W[t-16]; // W[16..63] = σ1(W[t-2]) + W[t-7] + σ0(W[t-15]) + W[t-16] คือขยายข้อมูลจาก 16 ชิ้นเป็น 64 ชิ้น โดยผสมบิตจากชิ้นก่อนหน้า
+    }                                                               // สร้าง W ครบแล้ว
+    let [a, b, c, d, e, f, g, h] = H;                               // คัดลอกค่า Hash ปัจจุบันทั้ง 8 ตัวมาไว้ในตัวแปรทำงาน a ถึง h
+    for (let t = 0; t < 64; t++) {                                  // บีบอัดข้อมูล (Compression) 64 รอบ ซึ่งเป็นหัวใจของ SHA-256
+      const T1 = (h + (R(e,6) ^ R(e,11) ^ R(e,25)) + ((e & f) ^ (~e & g)) + K[t] + W[t]) >>> 0; // T1 = h + Σ1(e) + Ch(e,f,g) + K[t] + W[t]  โดย Ch คือการเลือกบิต ถ้าบิตของ e เป็น 1 ให้ใช้บิตจาก f ถ้าเป็น 0 ให้ใช้บิตจาก g
+      const T2 = ((R(a,2) ^ R(a,13) ^ R(a,22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;          // T2 = Σ0(a) + Maj(a,b,c)  โดย Maj คือเสียงข้างมาก บิตไหนใน a, b, c เป็นค่าเดียวกันอย่างน้อย 2 ใน 3 ก็ใช้ค่านั้น
+      h = g; g = f; f = e; e = (d + T1) >>> 0;                      // เลื่อนตัวแปรลงหนึ่งตำแหน่ง ส่วน e ตัวใหม่ = d + T1 (ตัดให้เหลือ 32 บิต)
+      d = c; c = b; b = a; a = (T1 + T2) >>> 0;                     // เลื่อนต่อจนครบ ส่วน a ตัวใหม่ = T1 + T2 (ตัดให้เหลือ 32 บิต)
+    }                                                               // ครบ 64 รอบ
+    [a, b, c, d, e, f, g, h].forEach((x, i) => H[i] += x);          // นำผลของบล็อกนี้ไปบวกเพิ่มเข้ากับค่า Hash เดิม (Uint32Array ตัดให้เหลือ 32 บิตเอง)
+  }                                                                 // ประมวลผลครบทุกบล็อกแล้ว
+  const out = new Uint8Array(32);                                   // เตรียมพื้นที่เก็บผลลัพธ์ 32 ไบต์
+  H.forEach((x, i) => new DataView(out.buffer).setUint32(i * 4, x)); // เขียน H[0] ถึง H[7] เรียงต่อกันแบบ Big-endian ตัวละ 4 ไบต์ รวมเป็น 32 ไบต์
+  return out;                                                       // ส่งค่า Hash กลับไป
+}                                                                   // จบฟังก์ชัน sha256
+
+// ==================== ส่วนที่ 2: ฟังก์ชันแปลงรูปแบบข้อมูล ====================
+const toHex = u8 => Array.from(u8, x => x.toString(16).padStart(2, '0')).join(''); // แปลงไบต์เป็นเลขฐานสิบหก ไบต์ละ 2 ตัว ถ้าไม่ครบให้เติม 0 ข้างหน้า
+const toBin = u8 => Array.from(u8, x => x.toString(2).padStart(8, '0')).join('');  // แปลงไบต์เป็นเลขฐานสอง ไบต์ละ 8 บิต ถ้าไม่ครบให้เติม 0 ข้างหน้า
+const binToBytes = s => Uint8Array.from(s.match(/.{8}/g) || [], x => parseInt(x, 2)); // แปลงสายบิตกลับเป็นไบต์ โดยตัดทีละ 8 บิตแล้วแปลงเป็นเลข 0-255
+const group = (s, n) => (s.match(new RegExp('.{1,' + n + '}', 'g')) || []).join(' '); // เว้นวรรคทุก n ตัวให้อ่านและนับด้วยตาได้ง่าย ใช้แค่ตอนแสดงผล ไม่มีผลกับการคำนวณ
+
+// ==================== ส่วนที่ 3: Wordlist ของ BIP39 ภาษาอังกฤษ 2,048 คำ (ฉบับทางการ) ====================
+// ที่มา: github.com/bitcoin/bips/blob/master/bip-0039/english.txt  ค่า SHA-256 ของไฟล์ = 2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda
+// บรรทัดละ 16 คำ ตัวเลขท้ายบรรทัดบอกลำดับของคำแรกถึงคำสุดท้ายในบรรทัดนั้น (เริ่มนับที่ 0) และระบบจะตรวจ Hash ของรายการนี้ทุกครั้งที่เปิดไฟล์
+const WORDS = [                                                     // เก็บคำไว้เป็นข้อความทีละบรรทัด แล้วค่อยแยกเป็นคำในบรรทัดท้าย
+  "abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid", // 0000-0015
+  "acoustic acquire across act action actor actress actual adapt add addict address adjust admit adult advance", // 0016-0031
+  "advice aerobic affair afford afraid again age agent agree ahead aim air airport aisle alarm album", // 0032-0047
+  "alcohol alert alien all alley allow almost alone alpha already also alter always amateur amazing among", // 0048-0063
+  "amount amused analyst anchor ancient anger angle angry animal ankle announce annual another answer antenna antique", // 0064-0079
+  "anxiety any apart apology appear apple approve april arch arctic area arena argue arm armed armor", // 0080-0095
+  "army around arrange arrest arrive arrow art artefact artist artwork ask aspect assault asset assist assume", // 0096-0111
+  "asthma athlete atom attack attend attitude attract auction audit august aunt author auto autumn average avocado", // 0112-0127
+  "avoid awake aware away awesome awful awkward axis baby bachelor bacon badge bag balance balcony ball", // 0128-0143
+  "bamboo banana banner bar barely bargain barrel base basic basket battle beach bean beauty because become", // 0144-0159
+  "beef before begin behave behind believe below belt bench benefit best betray better between beyond bicycle", // 0160-0175
+  "bid bike bind biology bird birth bitter black blade blame blanket blast bleak bless blind blood", // 0176-0191
+  "blossom blouse blue blur blush board boat body boil bomb bone bonus book boost border boring", // 0192-0207
+  "borrow boss bottom bounce box boy bracket brain brand brass brave bread breeze brick bridge brief", // 0208-0223
+  "bright bring brisk broccoli broken bronze broom brother brown brush bubble buddy budget buffalo build bulb", // 0224-0239
+  "bulk bullet bundle bunker burden burger burst bus business busy butter buyer buzz cabbage cabin cable", // 0240-0255
+  "cactus cage cake call calm camera camp can canal cancel candy cannon canoe canvas canyon capable", // 0256-0271
+  "capital captain car carbon card cargo carpet carry cart case cash casino castle casual cat catalog", // 0272-0287
+  "catch category cattle caught cause caution cave ceiling celery cement census century cereal certain chair chalk", // 0288-0303
+  "champion change chaos chapter charge chase chat cheap check cheese chef cherry chest chicken chief child", // 0304-0319
+  "chimney choice choose chronic chuckle chunk churn cigar cinnamon circle citizen city civil claim clap clarify", // 0320-0335
+  "claw clay clean clerk clever click client cliff climb clinic clip clock clog close cloth cloud", // 0336-0351
+  "clown club clump cluster clutch coach coast coconut code coffee coil coin collect color column combine", // 0352-0367
+  "come comfort comic common company concert conduct confirm congress connect consider control convince cook cool copper", // 0368-0383
+  "copy coral core corn correct cost cotton couch country couple course cousin cover coyote crack cradle", // 0384-0399
+  "craft cram crane crash crater crawl crazy cream credit creek crew cricket crime crisp critic crop", // 0400-0415
+  "cross crouch crowd crucial cruel cruise crumble crunch crush cry crystal cube culture cup cupboard curious", // 0416-0431
+  "current curtain curve cushion custom cute cycle dad damage damp dance danger daring dash daughter dawn", // 0432-0447
+  "day deal debate debris decade december decide decline decorate decrease deer defense define defy degree delay", // 0448-0463
+  "deliver demand demise denial dentist deny depart depend deposit depth deputy derive describe desert design desk", // 0464-0479
+  "despair destroy detail detect develop device devote diagram dial diamond diary dice diesel diet differ digital", // 0480-0495
+  "dignity dilemma dinner dinosaur direct dirt disagree discover disease dish dismiss disorder display distance divert divide", // 0496-0511
+  "divorce dizzy doctor document dog doll dolphin domain donate donkey donor door dose double dove draft", // 0512-0527
+  "dragon drama drastic draw dream dress drift drill drink drip drive drop drum dry duck dumb", // 0528-0543
+  "dune during dust dutch duty dwarf dynamic eager eagle early earn earth easily east easy echo", // 0544-0559
+  "ecology economy edge edit educate effort egg eight either elbow elder electric elegant element elephant elevator", // 0560-0575
+  "elite else embark embody embrace emerge emotion employ empower empty enable enact end endless endorse enemy", // 0576-0591
+  "energy enforce engage engine enhance enjoy enlist enough enrich enroll ensure enter entire entry envelope episode", // 0592-0607
+  "equal equip era erase erode erosion error erupt escape essay essence estate eternal ethics evidence evil", // 0608-0623
+  "evoke evolve exact example excess exchange excite exclude excuse execute exercise exhaust exhibit exile exist exit", // 0624-0639
+  "exotic expand expect expire explain expose express extend extra eye eyebrow fabric face faculty fade faint", // 0640-0655
+  "faith fall false fame family famous fan fancy fantasy farm fashion fat fatal father fatigue fault", // 0656-0671
+  "favorite feature february federal fee feed feel female fence festival fetch fever few fiber fiction field", // 0672-0687
+  "figure file film filter final find fine finger finish fire firm first fiscal fish fit fitness", // 0688-0703
+  "fix flag flame flash flat flavor flee flight flip float flock floor flower fluid flush fly", // 0704-0719
+  "foam focus fog foil fold follow food foot force forest forget fork fortune forum forward fossil", // 0720-0735
+  "foster found fox fragile frame frequent fresh friend fringe frog front frost frown frozen fruit fuel", // 0736-0751
+  "fun funny furnace fury future gadget gain galaxy gallery game gap garage garbage garden garlic garment", // 0752-0767
+  "gas gasp gate gather gauge gaze general genius genre gentle genuine gesture ghost giant gift giggle", // 0768-0783
+  "ginger giraffe girl give glad glance glare glass glide glimpse globe gloom glory glove glow glue", // 0784-0799
+  "goat goddess gold good goose gorilla gospel gossip govern gown grab grace grain grant grape grass", // 0800-0815
+  "gravity great green grid grief grit grocery group grow grunt guard guess guide guilt guitar gun", // 0816-0831
+  "gym habit hair half hammer hamster hand happy harbor hard harsh harvest hat have hawk hazard", // 0832-0847
+  "head health heart heavy hedgehog height hello helmet help hen hero hidden high hill hint hip", // 0848-0863
+  "hire history hobby hockey hold hole holiday hollow home honey hood hope horn horror horse hospital", // 0864-0879
+  "host hotel hour hover hub huge human humble humor hundred hungry hunt hurdle hurry hurt husband", // 0880-0895
+  "hybrid ice icon idea identify idle ignore ill illegal illness image imitate immense immune impact impose", // 0896-0911
+  "improve impulse inch include income increase index indicate indoor industry infant inflict inform inhale inherit initial", // 0912-0927
+  "inject injury inmate inner innocent input inquiry insane insect inside inspire install intact interest into invest", // 0928-0943
+  "invite involve iron island isolate issue item ivory jacket jaguar jar jazz jealous jeans jelly jewel", // 0944-0959
+  "job join joke journey joy judge juice jump jungle junior junk just kangaroo keen keep ketchup", // 0960-0975
+  "key kick kid kidney kind kingdom kiss kit kitchen kite kitten kiwi knee knife knock know", // 0976-0991
+  "lab label labor ladder lady lake lamp language laptop large later latin laugh laundry lava law", // 0992-1007
+  "lawn lawsuit layer lazy leader leaf learn leave lecture left leg legal legend leisure lemon lend", // 1008-1023
+  "length lens leopard lesson letter level liar liberty library license life lift light like limb limit", // 1024-1039
+  "link lion liquid list little live lizard load loan lobster local lock logic lonely long loop", // 1040-1055
+  "lottery loud lounge love loyal lucky luggage lumber lunar lunch luxury lyrics machine mad magic magnet", // 1056-1071
+  "maid mail main major make mammal man manage mandate mango mansion manual maple marble march margin", // 1072-1087
+  "marine market marriage mask mass master match material math matrix matter maximum maze meadow mean measure", // 1088-1103
+  "meat mechanic medal media melody melt member memory mention menu mercy merge merit merry mesh message", // 1104-1119
+  "metal method middle midnight milk million mimic mind minimum minor minute miracle mirror misery miss mistake", // 1120-1135
+  "mix mixed mixture mobile model modify mom moment monitor monkey monster month moon moral more morning", // 1136-1151
+  "mosquito mother motion motor mountain mouse move movie much muffin mule multiply muscle museum mushroom music", // 1152-1167
+  "must mutual myself mystery myth naive name napkin narrow nasty nation nature near neck need negative", // 1168-1183
+  "neglect neither nephew nerve nest net network neutral never news next nice night noble noise nominee", // 1184-1199
+  "noodle normal north nose notable note nothing notice novel now nuclear number nurse nut oak obey", // 1200-1215
+  "object oblige obscure observe obtain obvious occur ocean october odor off offer office often oil okay", // 1216-1231
+  "old olive olympic omit once one onion online only open opera opinion oppose option orange orbit", // 1232-1247
+  "orchard order ordinary organ orient original orphan ostrich other outdoor outer output outside oval oven over", // 1248-1263
+  "own owner oxygen oyster ozone pact paddle page pair palace palm panda panel panic panther paper", // 1264-1279
+  "parade parent park parrot party pass patch path patient patrol pattern pause pave payment peace peanut", // 1280-1295
+  "pear peasant pelican pen penalty pencil people pepper perfect permit person pet phone photo phrase physical", // 1296-1311
+  "piano picnic picture piece pig pigeon pill pilot pink pioneer pipe pistol pitch pizza place planet", // 1312-1327
+  "plastic plate play please pledge pluck plug plunge poem poet point polar pole police pond pony", // 1328-1343
+  "pool popular portion position possible post potato pottery poverty powder power practice praise predict prefer prepare", // 1344-1359
+  "present pretty prevent price pride primary print priority prison private prize problem process produce profit program", // 1360-1375
+  "project promote proof property prosper protect proud provide public pudding pull pulp pulse pumpkin punch pupil", // 1376-1391
+  "puppy purchase purity purpose purse push put puzzle pyramid quality quantum quarter question quick quit quiz", // 1392-1407
+  "quote rabbit raccoon race rack radar radio rail rain raise rally ramp ranch random range rapid", // 1408-1423
+  "rare rate rather raven raw razor ready real reason rebel rebuild recall receive recipe record recycle", // 1424-1439
+  "reduce reflect reform refuse region regret regular reject relax release relief rely remain remember remind remove", // 1440-1455
+  "render renew rent reopen repair repeat replace report require rescue resemble resist resource response result retire", // 1456-1471
+  "retreat return reunion reveal review reward rhythm rib ribbon rice rich ride ridge rifle right rigid", // 1472-1487
+  "ring riot ripple risk ritual rival river road roast robot robust rocket romance roof rookie room", // 1488-1503
+  "rose rotate rough round route royal rubber rude rug rule run runway rural sad saddle sadness", // 1504-1519
+  "safe sail salad salmon salon salt salute same sample sand satisfy satoshi sauce sausage save say", // 1520-1535
+  "scale scan scare scatter scene scheme school science scissors scorpion scout scrap screen script scrub sea", // 1536-1551
+  "search season seat second secret section security seed seek segment select sell seminar senior sense sentence", // 1552-1567
+  "series service session settle setup seven shadow shaft shallow share shed shell sheriff shield shift shine", // 1568-1583
+  "ship shiver shock shoe shoot shop short shoulder shove shrimp shrug shuffle shy sibling sick side", // 1584-1599
+  "siege sight sign silent silk silly silver similar simple since sing siren sister situate six size", // 1600-1615
+  "skate sketch ski skill skin skirt skull slab slam sleep slender slice slide slight slim slogan", // 1616-1631
+  "slot slow slush small smart smile smoke smooth snack snake snap sniff snow soap soccer social", // 1632-1647
+  "sock soda soft solar soldier solid solution solve someone song soon sorry sort soul sound soup", // 1648-1663
+  "source south space spare spatial spawn speak special speed spell spend sphere spice spider spike spin", // 1664-1679
+  "spirit split spoil sponsor spoon sport spot spray spread spring spy square squeeze squirrel stable stadium", // 1680-1695
+  "staff stage stairs stamp stand start state stay steak steel stem step stereo stick still sting", // 1696-1711
+  "stock stomach stone stool story stove strategy street strike strong struggle student stuff stumble style subject", // 1712-1727
+  "submit subway success such sudden suffer sugar suggest suit summer sun sunny sunset super supply supreme", // 1728-1743
+  "sure surface surge surprise surround survey suspect sustain swallow swamp swap swarm swear sweet swift swim", // 1744-1759
+  "swing switch sword symbol symptom syrup system table tackle tag tail talent talk tank tape target", // 1760-1775
+  "task taste tattoo taxi teach team tell ten tenant tennis tent term test text thank that", // 1776-1791
+  "theme then theory there they thing this thought three thrive throw thumb thunder ticket tide tiger", // 1792-1807
+  "tilt timber time tiny tip tired tissue title toast tobacco today toddler toe together toilet token", // 1808-1823
+  "tomato tomorrow tone tongue tonight tool tooth top topic topple torch tornado tortoise toss total tourist", // 1824-1839
+  "toward tower town toy track trade traffic tragic train transfer trap trash travel tray treat tree", // 1840-1855
+  "trend trial tribe trick trigger trim trip trophy trouble truck true truly trumpet trust truth try", // 1856-1871
+  "tube tuition tumble tuna tunnel turkey turn turtle twelve twenty twice twin twist two type typical", // 1872-1887
+  "ugly umbrella unable unaware uncle uncover under undo unfair unfold unhappy uniform unique unit universe unknown", // 1888-1903
+  "unlock until unusual unveil update upgrade uphold upon upper upset urban urge usage use used useful", // 1904-1919
+  "useless usual utility vacant vacuum vague valid valley valve van vanish vapor various vast vault vehicle", // 1920-1935
+  "velvet vendor venture venue verb verify version very vessel veteran viable vibrant vicious victory video view", // 1936-1951
+  "village vintage violin virtual virus visa visit visual vital vivid vocal voice void volcano volume vote", // 1952-1967
+  "voyage wage wagon wait walk wall walnut want warfare warm warrior wash wasp waste water wave", // 1968-1983
+  "way wealth weapon wear weasel weather web wedding weekend weird welcome west wet whale what wheat", // 1984-1999
+  "wheel when where whip whisper wide width wife wild will win window wine wing wink winner", // 2000-2015
+  "winter wire wisdom wise wish witness wolf woman wonder wood wool word work world worry worth", // 2016-2031
+  "wrap wreck wrestle wrist write wrong yard year yellow you young youth zebra zero zone zoo", // 2032-2047
+].join(' ').split(' ');                                             // รวมทุกบรรทัดด้วยช่องว่าง แล้วแยกทีละคำ ได้ WORDS[0] = 'abandon' ไปจนถึง WORDS[2047] = 'zoo'
+
+// ==================== ส่วนที่ 4: แกนหลักของ BIP39 แปลง Entropy เป็น Seed Phrase ====================
+function entropyToMnemonic(ent) {                                   // รับ Entropy เป็นสายบิตยาว 128 หรือ 256 ตัว แล้วคืนค่าผลของทุกขั้นตอน
+  const bytes = binToBytes(ent);                                    // ขั้นที่ 2: แปลง Entropy เป็นไบต์ (128 บิต = 16 ไบต์, 256 บิต = 32 ไบต์)
+  const hash = sha256(bytes);                                       // ขั้นที่ 3: หา SHA-256 ของ "ไบต์" Entropy (ระวัง: ไม่ใช่ Hash ของตัวอักษร "0101...")
+  const cs = toBin(hash).slice(0, ent.length / 32);                 // ขั้นที่ 4: Checksum คือบิตแรก ๆ ของ Hash ยาวเท่ากับความยาว Entropy หาร 32 (128 บิตได้ 4 บิต, 256 บิตได้ 8 บิต)
+  const all = ent + cs;                                             // ขั้นที่ 5: ต่อ Checksum ท้าย Entropy ได้ 132 บิต (12 × 11) หรือ 264 บิต (24 × 11)
+  const idx = all.match(/.{11}/g).map(x => parseInt(x, 2));         // ขั้นที่ 6: ตัดทีละ 11 บิต แล้วแปลงเป็นเลข 0-2047 (2^11 = 2,048 เท่ากับจำนวนคำใน Wordlist พอดี)
+  return { bytes, hash, cs, all, idx, words: idx.map(i => WORDS[i]) }; // ขั้นที่ 7: ใช้เลขแต่ละตัวเปิดหาคำใน Wordlist แล้วส่งผลทุกขั้นกลับไป
+}                                                                   // จบฟังก์ชันแกนหลัก
+
+// ==================== ส่วนที่ 5: Self-test ทำงานทุกครั้งที่เปิดไฟล์ ====================
+function selfTest() {                                               // ตรวจว่า SHA-256, Wordlist และขั้นตอน BIP39 ถูกต้อง โดยเทียบกับชุดทดสอบมาตรฐานที่รู้คำตอบแน่นอน
+  const enc = s => new TextEncoder().encode(s);                     // ตัวช่วยแปลงข้อความเป็นไบต์แบบ UTF-8 (ใช้เฉพาะในการทดสอบ)
+  const mn = bits => entropyToMnemonic(bits).words.join(' ');       // ตัวช่วยเรียกแกนหลัก แล้วต่อคำด้วยช่องว่าง
+  const tests = [                                                   // ชุดทดสอบแต่ละชุดเก็บเป็น [ชื่อ, ผลที่คำนวณได้, คำตอบที่ถูกต้อง]
+    ['SHA-256("")', toHex(sha256(enc(''))), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'], // ค่ามาตรฐาน: Hash ของข้อมูลว่าง
+    ['SHA-256("abc")', toHex(sha256(enc('abc'))), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'], // ค่ามาตรฐาน NIST แบบบล็อกเดียว
+    ['SHA-256(448 บิต)', toHex(sha256(enc('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'))), '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1'], // ค่ามาตรฐาน NIST แบบ 2 บล็อก ใช้ทดสอบการวนหลายบล็อก
+    ['Wordlist', WORDS.length + ':' + toHex(sha256(enc(WORDS.join('\n') + '\n'))), '2048:2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda'], // Wordlist ต้องมีครบ 2,048 คำ และ Hash ต้องตรงกับไฟล์ english.txt ทางการทุกตัวอักษร
+    ['BIP39 00×16', mn('0'.repeat(128)), 'abandon '.repeat(11) + 'about'],                // ชุดทดสอบทางการของ Trezor: Entropy เป็น 0 ทั้งหมด 128 บิต
+    ['BIP39 80×16', mn('10000000'.repeat(16)), 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above'], // ชุดทดสอบทางการ: ไบต์ 0x80 ซ้ำกัน 16 ไบต์
+    ['BIP39 FF×16', mn('1'.repeat(128)), 'zoo '.repeat(11) + 'wrong'],                    // ชุดทดสอบทางการ: Entropy เป็น 1 ทั้งหมด 128 บิต
+    ['BIP39 00×32', mn('0'.repeat(256)), 'abandon '.repeat(23) + 'art'],                  // ชุดทดสอบทางการ: Entropy เป็น 0 ทั้งหมด 256 บิต
+    ['BIP39 FF×32', mn('1'.repeat(256)), 'zoo '.repeat(23) + 'vote'],                     // ชุดทดสอบทางการ: Entropy เป็น 1 ทั้งหมด 256 บิต
+  ];                                                                // จบรายการชุดทดสอบ
+  const fail = tests.filter(t => t[1] !== t[2]).map(t => t[0]);     // เก็บชื่อชุดทดสอบที่ผลไม่ตรงกับคำตอบ
+  const el = document.getElementById('selftest');                   // อ้างถึงตำแหน่งแสดงผล Self-test บนหน้าจอ
+  el.className = fail.length ? 'err' : 'ok';                        // มีชุดที่ไม่ผ่านให้เป็นสีแดง ผ่านหมดให้เป็นสีเขียว
+  el.textContent = fail.length ? '✘ Self-test ไม่ผ่าน: ' + fail.join(', ') + ' ห้ามใช้ไฟล์นี้' : '✔ Self-test ผ่านครบ ' + tests.length + ' ชุด (SHA-256 มาตรฐาน NIST 3 ชุด, Hash ของ Wordlist, ชุดทดสอบ BIP39 5 ชุด)'; // แสดงผลสรุป
+}                                                                   // จบฟังก์ชัน Self-test
+
+// ==================== ส่วนที่ 6: เชื่อมกับหน้าจอ คำนวณใหม่ทุกครั้งที่พิมพ์หรือเปลี่ยนตัวเลือก ====================
+const $ = id => document.getElementById(id);                        // ทางลัดสำหรับอ้างถึงองค์ประกอบบนหน้าจอด้วย id
+function status(cls, text) { $('status').className = cls; $('status').textContent = text; } // แสดงข้อความสถานะพร้อมสี (textContent แสดงเป็นข้อความล้วน ไม่ตีความเป็นโค้ด HTML)
+
+function sanitize() {                                               // กรองตัวอักษรในช่องกรอกทันทีที่พิมพ์หรือวาง ตัวที่ไม่อนุญาตจะถูกทิ้ง จึงพิมพ์ไม่ติด
+  const el = $('inp');                                              // อ้างถึงช่องกรอก Entropy
+  const bad = $('fmtHex').checked ? /[^0-9A-F \n]/g : /[^01 \n]/g; // ตัวอักษรต้องห้าม: HEX ยอมให้เฉพาะ 0-9, A-F ส่วน Binary ยอมให้เฉพาะ 0 และ 1 ส่วนตัวคั่นยอมแค่เว้นวรรคธรรมดากับขึ้นบรรทัดใหม่ อักขระซ่อนรูป (เช่น Non-breaking space, Tab) จะถูกลบทิ้ง
+  const up = el.value.toUpperCase();                                // แปลงเป็นตัวพิมพ์ใหญ่ก่อน พิมพ์ a-f ก็จะกลายเป็น A-F
+  const clean = up.replace(bad, '');                                // ลบตัวอักษรต้องห้ามออกทั้งหมด
+  if (clean === el.value) return;                                   // ถ้าไม่มีอะไรเปลี่ยน ก็ไม่ต้องทำอะไรต่อ
+  const pos = up.slice(0, el.selectionStart).replace(bad, '').length; // คำนวณตำแหน่งเคอร์เซอร์ใหม่ หลังลบตัวอักษรที่อยู่ข้างหน้าออกแล้ว
+  el.value = clean;                                                 // ใส่ค่าที่กรองแล้วกลับเข้าช่องกรอก
+  el.setSelectionRange(pos, pos);                                   // วางเคอร์เซอร์ไว้ที่เดิม ไม่ให้กระโดดไปท้ายข้อความ
+}                                                                   // จบฟังก์ชัน sanitize
+
+function run() {                                                    // ฟังก์ชันหลักของหน้าจอ: อ่านค่า → ตรวจ → คำนวณ → แสดงผล
+  const fmt = document.querySelector('input[name=fmt]:checked').value; // รูปแบบที่เลือกไว้ ได้ 'bin' หรือ 'hex'
+  const ENT = +document.querySelector('input[name=len]:checked').value; // จำนวนบิตที่ต้องการ ได้ 128 หรือ 256 (เครื่องหมาย + ใช้แปลงข้อความเป็นตัวเลข)
+  const raw = $('inp').value.replace(/\s+/g, '').toLowerCase();    // อ่านค่าที่กรอก ตัดช่องว่างและการขึ้นบรรทัดทิ้ง แล้วแปลงเป็นตัวพิมพ์เล็ก (A-F เป็น a-f)
+  $('steps').textContent = ''; $('out').textContent = ''; $('phrase').textContent = ''; // ล้างผลลัพธ์เก่าทิ้งก่อนทุกครั้ง
+  if ((fmt === 'bin' ? /[^01]/ : /[^0-9a-f]/).test(raw))            // ตรวจว่ามีตัวอักษรที่ไม่อนุญาตปนมาหรือไม่ (ปกติ sanitize กันไว้แล้ว บรรทัดนี้เป็นการตรวจซ้ำอีกชั้นเพื่อความปลอดภัย)
+    return status('err', '✘ มีตัวอักษรที่ไม่ใช่ ' + (fmt === 'bin' ? '0 หรือ 1' : 'HEX (0-9, a-f)') + ' กรุณาแก้ไขก่อน'); // ถ้ามี ให้แจ้งเตือนแล้วหยุดทำงาน
+  const inBits = fmt === 'bin' ? raw : [...raw].map(c => parseInt(c, 16).toString(2).padStart(4, '0')).join(''); // ขั้นที่ 1: แปลงสิ่งที่กรอกเป็นสายบิต (HEX 1 ตัวแปลงเป็น 4 บิต เช่น 'A' เป็น '1010')
+  const ent = inBits.slice(0, ENT);                                 // ใช้เฉพาะ 128 หรือ 256 บิตแรกในการคำนวณ ส่วนที่เกินจะไม่ถูกนำมาใช้
+  const extra = inBits.length - ent.length;                         // จำนวนบิตที่กรอกเกินมา (0 = ไม่เกิน)
+  const need = ENT - ent.length;                                    // จำนวนบิตที่ยังขาด (0 = ครบพอดี)
+  let S = '[1] Entropy (' + ent.length + '/' + ENT + ' บิต)\n' + group(ent, 8) + '\n'; // เริ่มสร้างข้อความขั้นตอน แสดง Entropy ที่ใช้จริง เว้นวรรคทุก 8 บิต
+  if (extra) S += '\n(กรอกมาทั้งหมด ' + inBits.length + ' บิต ใช้เฉพาะ ' + ENT + ' บิตแรกในการคำนวณเท่านั้น ส่วนเกิน ' + extra + ' บิตด้านล่างนี้ไม่ถูกนำมาใช้)\n' + group(inBits.slice(ENT), 8) + '\n'; // แสดงบิตส่วนเกินแยกไว้ ให้เห็นชัดว่าไม่ได้ใช้
+  let bits = ent, csLen = 0;                                        // bits คือสายบิตที่จะนำไปตัดเป็นคำ ส่วน csLen คือจำนวนบิต Checksum (0 = ยังไม่ได้คำนวณ)
+  if (need > 0) {                                                   // กรณียังกรอกไม่ครบ
+    status('warn', 'จำนวนบิตยังไม่ครบ ต้องทอยเพิ่มอีก ' + need + ' บิต' + (fmt === 'bin' ? ' (' + need + ' ครั้ง)' : ' (HEX อีก ' + need / 4 + ' ตัว หรือทอย d16 อีก ' + need / 4 + ' ครั้ง)')); // บอกว่าต้องทอยเพิ่มอีกเท่าไร
+    S += '\n(ยังไม่คำนวณ Checksum จนกว่าจะครบ ' + ENT + ' บิต คำที่แสดงด้านล่างเป็นค่าชั่วคราว ห้ามนำไปใช้)'; // อธิบายว่าคำที่เห็นยังไม่ใช่ผลจริง
+    if (ent.length % 11) S += '\n(เหลือเศษท้าย ' + ent.length % 11 + ' บิต ยังไม่ครบ 11 บิต จึงยังแปลงเป็นคำไม่ได้)'; // บอกจำนวนบิตที่เหลือซึ่งยังไม่พอสำหรับ 1 คำ
+  } else {                                                          // กรณีครบ (หรือเกินแต่ตัดแล้ว) คำนวณเต็มทุกขั้นตอน
+    const r = entropyToMnemonic(ent);                               // เรียกใช้แกนหลักในส่วนที่ 4
+    bits = r.all; csLen = ENT / 32;                                 // ใช้สายบิตที่ต่อ Checksum แล้ว และจำจำนวนบิต Checksum ไว้ใช้ตอนแสดงผล
+    status(extra ? 'warn' : 'ok', '✔ ครบ ' + ENT + ' บิต ได้ ' + r.words.length + ' คำ' + (extra ? ' (กรอกเกินมา ' + extra + ' บิต ใช้เฉพาะ ' + ENT + ' บิตแรกในการคำนวณเท่านั้น)' : '')); // แจ้งว่าครบแล้ว ถ้ากรอกเกินจะเป็นสีส้มและบอกว่าใช้แค่บิตแรก ๆ
+    S += '\n[2] Entropy ในรูป HEX (' + r.bytes.length + ' ไบต์) ข้อมูลชุดนี้คือสิ่งที่นำไปหา Hash\n' + toHex(r.bytes) + '\n'; // นำค่านี้ไปตรวจกับเครื่องมือ SHA-256 ตัวอื่นในโหมด Hex ได้
+    S += '\n[3] SHA-256(Entropy)\n' + toHex(r.hash) + '\n';          // แสดงค่า Hash เต็ม 64 ตัวอักษร
+    S += '\n[4] Checksum = ' + csLen + ' บิตแรกของ Hash\n' + 'Hash ตัวแรก ' + toHex(r.hash).slice(0, csLen / 4) + ' = ' + r.cs + '\n'; // 4 บิตคือ HEX ตัวแรก 1 ตัว ส่วน 8 บิตคือ HEX 2 ตัวแรก
+    S += '\n[5] Entropy + Checksum = ' + r.all.length + ' บิต ตัดทีละ 11 บิต\n' + group(r.all, 11); // แสดงสายบิตทั้งหมดที่ใช้สร้างคำ แบ่งกลุ่มละ 11 บิต
+  }                                                                 // จบการแยกกรณี
+  $('steps').textContent = S;                                       // แสดงข้อความขั้นตอนทั้งหมดบนหน้าจอ
+  const words = [];                                                 // เตรียมที่เก็บคำ
+  for (let i = 0; i < Math.floor(bits.length / 11); i++) {          // วนทีละ 11 บิตเท่าที่มีครบ (เช่น 100 บิตจะได้ 9 คำ)
+    const chunk = bits.slice(i * 11, i * 11 + 11);                  // ตัดบิตชุดที่ i ออกมา 11 บิต
+    const n = parseInt(chunk, 2);                                   // แปลงจากเลขฐานสองเป็นเลขฐานสิบ (0-2047)
+    const last = csLen && (i + 1) * 11 === bits.length;             // เช็กว่าเป็นคำสุดท้ายที่มี Checksum ต่อท้ายอยู่หรือไม่
+    words.push(WORDS[n]);                                           // เปิดหาคำใน Wordlist แล้วเก็บไว้
+    const row = $('out').insertRow();                               // เพิ่มแถวใหม่ในตารางผลลัพธ์
+    [i + 1, last ? chunk.slice(0, 11 - csLen) + ' + ' + chunk.slice(11 - csLen) + ' (checksum)' : chunk, n, n + 1, WORDS[n]] // ข้อมูล 5 ช่องของแถวนี้ โดยคำสุดท้ายจะแยกให้เห็นว่าบิตท้ายคือ Checksum
+      .forEach(x => row.insertCell().textContent = x);              // ใส่ข้อมูลลงทีละช่องเป็นข้อความล้วน
+  }                                                                 // จบการวนสร้างคำ
+  $('phrase').textContent = words.map((w, i) => (i + 1) + '.' + w).join('  ') + (need > 0 && words.length ? '\n(ค่าชั่วคราว ยังไม่ครบ ห้ามใช้)' : '') + (extra ? '\n⚠ Seed Phrase นี้สร้างจาก ' + ENT + ' บิตแรกเท่านั้น ถ้าจะจดสำรอง Entropy ให้จดเฉพาะ ' + ENT + ' บิตแรก (ดูขั้นที่ [1])' : ''); // แสดง Seed Phrase ทั้งชุดในบรรทัดเดียว พร้อมเลขลำดับ และคำเตือนถ้ามีการตัดบิตส่วนเกิน
+}                                                                   // จบฟังก์ชัน run
+
+selfTest();                                                         // รัน Self-test ทันทีที่เปิดไฟล์
+$('clr').addEventListener('click', () => { $('inp').value = ''; run(); }); // กดล้างข้อมูล: ลบค่าในช่องกรอก แล้วคำนวณใหม่ซึ่งจะล้างผลลัพธ์ทุกส่วนบนหน้าจอ
+$('inp').addEventListener('input', sanitize);                      // กรองตัวอักษรทุกครั้งที่พิมพ์หรือวาง (ทำงานก่อน run เพราะผูกไว้กับช่องกรอกโดยตรง)
+document.querySelectorAll('input[name=fmt]').forEach(r => r.addEventListener('change', () => { $('inp').value = ''; })); // สลับ Binary/HEX แล้วล้างช่องกรอก เพราะข้อความเดิมจะมีความหมายเป็นบิตคนละชุด (เช่น '10' ใน Binary = 2 บิต แต่ใน HEX = 8 บิต)
+['input', 'change'].forEach(ev => document.addEventListener(ev, run)); // ให้คำนวณใหม่แบบ Real-time ทุกครั้งที่พิมพ์หรือเปลี่ยนตัวเลือก
+run();                                                              // คำนวณครั้งแรก เพื่อแสดงสถานะตั้งต้น
+</script>                                                           <!-- จบส่วนโค้ด JavaScript -->
+</body>                                                             <!-- จบส่วนเนื้อหา -->
+</html>                                                             <!-- จบเอกสาร -->
